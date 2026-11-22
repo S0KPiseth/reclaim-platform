@@ -60,3 +60,21 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ==========================================
+# Embedding Service
+# ==========================================
+# The CLIP checkpoint is ~600 MB and is never committed. Put it in
+# server/model (the service default) or point MODEL_DIR at it.
+server/model/
+server/model-*.zip
+server/embedding-service/model/
+
+# Service secrets
+server/embedding-service/.env
+
+# Python bytecode / venv from the embedding service
+server/embedding-service/__pycache__/
+*.py[cod]
+server/embedding-service/.venv/
+server/embedding-service/venv/

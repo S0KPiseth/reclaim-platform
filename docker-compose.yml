@@ -1,0 +1,86 @@
+# One-command dev stack for the Reclaim backend.
+#
+#   docker compose up --build
+#
+# Brings up:
+#   postgres   :5432   database
+#   api        :3445   Express REST API (runs migrations on boot)
+#   embedding  :8000   CLIP microservice (text/image -> 512-d vectors)
+#
+# The CLIP model is ~600 MB and is git-ignored, so it is NOT baked into the
+# image. It is mounted read-only from ./server/model. If that folder is empty
+# the embedding service exits and the API still runs with keyword search only.
+#
+# See README-DOCKER.md for setup and troubleshooting.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: reclaim
+      POSTGRES_PASSWORD: reclaim
+      POSTGRES_DB: reclaim
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reclaim -d reclaim"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  embedding:
+    build:
+      context: ./server/embedding-service
+    environment:
+      MODEL_DIR: /models/model
+      MODEL_VERSION: v1
+      # Empty = no API key required. Set it here and in the API service below
+      # to require one.
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      MAX_IMAGE_MB: "10"
+      MAX_CANDIDATES: "2000"
+    volumes:
+      # Read-only: the service only ever reads the checkpoint.
+      - ./server/model:/models/model:ro
+    ports:
+      - "8000:8000"
+    healthcheck:
+      # No curl in the slim image, so probe with Python (always present).
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if b'\\\"ok\\\"' in urllib.request.urlopen('http://127.0.0.1:8000/health').read() else 1)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      # Model load can take a while on CPU.
+      start_period: 90s
+
+  api:
+    build:
+      context: ./server
+    environment:
+      DATABASE_URL: postgresql://reclaim:reclaim@postgres:5432/reclaim?schema=public
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-in-production}
+      PORT: "3445"
+      # Service DNS name from inside the compose network.
+      EMBEDDING_URL: http://embedding:8000
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      # How the embedding service reaches this API to fetch item photos. It runs
+      # on the same network, so the service name works.
+      PUBLIC_BASE_URL: http://api:3445
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3445:3445"
+    volumes:
+      # Persist uploaded photos across container restarts.
+      - uploads:/app/uploads
+
+volumes:
+  pgdata:
+  uploads:

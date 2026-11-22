@@ -34,6 +34,14 @@ export const uploadImages = multer({
   limits: { fileSize: config.maxImageBytes, files: config.maxImagesPerItem },
 }).array("images", config.maxImagesPerItem);
 
+// Single search image kept in memory only: it is encoded and discarded, never
+// written to disk. Field name "image".
+export const uploadSearchImage = multer({
+  storage: multer.memoryStorage(),
+  fileFilter,
+  limits: { fileSize: config.maxImageBytes, files: 1 },
+}).single("image");
+
 // Removes a previously stored upload given its public URL ("/uploads/xxx.jpg").
 export function removeUploadedFile(url) {
   if (!url?.startsWith(`${config.publicPathPrefix}/`)) return;

@@ -1,0 +1,11 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pillow>=10.0
+numpy>=1.26
+httpx>=0.27
+pydantic>=2.6
+transformers==4.57.1
+# torch is installed separately: a CPU wheel locally
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+# or your CUDA build for a GPU box.

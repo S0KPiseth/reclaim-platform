@@ -5,6 +5,7 @@ import { isAdmin, requireAuth } from "../middleware/auth.js";
 import { removeUploadedFile, removeUploadedFiles, uploadImages } from "../middleware/upload.js";
 import { validate } from "../middleware/validate.js";
 import { badRequest, forbidden, notFound } from "../middleware/errors.js";
+import { queueItemEmbedding } from "../lib/embeddingIndex.js";
 import { itemIdParamSchema } from "../schemas/index.js";
 
 // Mounted at /items  ->  POST /items/:id/images
@@ -56,6 +57,9 @@ itemImagesRouter.post("/:id/images", requireAuth, uploadImages, async (req, res,
       orderBy: { position: "asc" },
     });
 
+    // New photos change what the item looks like, so its vector must be rebuilt.
+    queueItemEmbedding(item.id);
+
     res.status(201).json({ data: images });
   } catch (err) {
     removeUploadedFiles(req.files ?? []);
@@ -77,6 +81,10 @@ imagesRouter.delete("/:id", requireAuth, async (req, res, next) => {
 
     await prisma.itemImage.delete({ where: { id: image.id } });
     removeUploadedFile(image.url);
+
+    // Rebuild the item vector without the deleted photo.
+    queueItemEmbedding(image.itemId);
+
 
     res.json({ data: { id: image.id, deleted: true } });
   } catch (err) {

@@ -2,14 +2,23 @@ import { Router } from "express";
 import { prisma } from "../db.js";
 import { config } from "../config.js";
 import { isAdmin, optionalAuth, requireAuth } from "../middleware/auth.js";
-import { uploadImages, removeUploadedFiles } from "../middleware/upload.js";
+import { uploadImages, removeUploadedFiles, uploadSearchImage } from "../middleware/upload.js";
 import { validate } from "../middleware/validate.js";
 import { AppError, forbidden, notFound, unprocessable } from "../middleware/errors.js";
 import { resolveCategory, slugifyCategory } from "../lib/category.js";
 import {
+  isEmbeddingEnabled,
+  queueItemEmbedding,
+  queueMissingEmbeddings,
+  rankIdsByImage,
+  rankIdsByText,
+  reindexItems,
+} from "../lib/embeddingIndex.js";
+import {
   createItemSchema,
   itemIdParamSchema,
   listItemsQuerySchema,
+  searchImageQuerySchema,
   updateItemSchema,
 } from "../schemas/index.js";
 
@@ -31,6 +40,26 @@ const itemInclude = {
   poster: publicPoster,
   category: publicCategory,
 };
+
+// Restricts a listing to items the viewer may see. ARCHIVED is poster/admin only.
+function visibilityWhere({ status, categorySlug }, viewer) {
+  const where = {
+    status,
+    ...(categorySlug ? { category: { slug: categorySlug } } : {}),
+  };
+  if (status === "ARCHIVED") {
+    if (!viewer) throw forbidden("Log in to view archived items");
+    if (!isAdmin(viewer)) where.posterId = viewer.id;
+  }
+  return where;
+}
+
+// Keyword filter used by both search modes. In semantic mode it is only a
+// pre-filter guard for very large tables, not the ranking itself.
+const keywordOr = (q) => [
+  { title: { contains: q, mode: "insensitive" } },
+  { description: { contains: q, mode: "insensitive" } },
+];
 
 // Maps a category filter (slug or display name) to a slug for the lookup.
 const categoryFilterSlug = (value) => slugifyCategory(value);
@@ -61,31 +90,56 @@ function assertOwnerOrAdmin(item, user) {
 }
 
 // GET /items — public, with optional auth to reveal ARCHIVED to poster/admin.
+// ?mode=semantic routes the query through the CLIP service: it matches related
+// wording and the item's photos, not just literal substrings.
 router.get(
   "/",
   optionalAuth,
   validate(listItemsQuerySchema, "query"),
   async (req, res, next) => {
     try {
-      const { q, category, status, page, limit } = req.validatedQuery;
-
+      const { q, category, status, page, limit, mode } = req.validatedQuery;
       const categorySlug = category ? categoryFilterSlug(category) : null;
-      const where = {
-        status,
-        ...(categorySlug ? { category: { slug: categorySlug } } : {}),
-      };
+      const where = visibilityWhere({ status, categorySlug }, req.user);
 
-      if (status === "ARCHIVED") {
-        if (!req.user) throw forbidden("Log in to view archived items");
-        if (!isAdmin(req.user)) where.posterId = req.user.id;
+      // Semantic search: fetch a bounded candidate pool, rank with CLIP, page
+      // in memory. Falls back to keyword search if the service is unavailable.
+      if (q && mode === "semantic") {
+        // Opportunistic backfill so unindexed items converge without admin action.
+        queueMissingEmbeddings();
+        const candidates = await prisma.item.findMany({
+          where,
+          include: itemInclude,
+          orderBy: { createdAt: "desc" },
+          take: config.searchCandidateCap,
+        });
+
+        const candidateIds = candidates.map((item) => item.id);
+        let orderedIds;
+        try {
+          orderedIds = await rankIdsByText(q, candidateIds);
+        } catch (err) {
+          // rankIdsByText already degrades to null; this is a belt-and-braces guard.
+          console.warn(`[embedding] semantic search failed: ${err.message}`);
+          orderedIds = null;
+        }
+
+        if (orderedIds) {
+          const byId = new Map(candidates.map((item) => [item.id, item]));
+          const ranked = orderedIds.map((id) => byId.get(id)).filter(Boolean);
+          const start = (page - 1) * limit;
+          return res.json({
+            data: ranked.slice(start, start + limit).map(serializeItem),
+            page,
+            limit,
+            total: ranked.length,
+            searchMode: "semantic",
+          });
+        }
+        // Model unavailable: fall through to keyword search below.
       }
 
-      if (q) {
-        where.OR = [
-          { title: { contains: q, mode: "insensitive" } },
-          { description: { contains: q, mode: "insensitive" } },
-        ];
-      }
+      if (q) where.OR = keywordOr(q);
 
       const [total, items] = await Promise.all([
         prisma.item.count({ where }),
@@ -98,7 +152,69 @@ router.get(
         }),
       ]);
 
-      res.json({ data: items.map(serializeItem), page, limit, total });
+      res.json({
+        data: items.map(serializeItem),
+        page,
+        limit,
+        total,
+        searchMode: "keyword",
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// POST /items/search-image — image -> image. Declared before /items/:id so the
+// literal path is not captured as an id. The uploaded image is never stored.
+// Result trimming is handled once, inside rankIdsByImage (relative cutoff), so
+// there is no absolute score threshold here: CLIP keeps text-only items out and
+// filters to items that actually have photos.
+router.post(
+  "/search-image",
+  optionalAuth,
+  uploadSearchImage,
+  validate(searchImageQuerySchema, "query"),
+  async (req, res, next) => {
+    try {
+      if (!req.file) throw unprocessable("image: An image file is required");
+      if (!isEmbeddingEnabled()) {
+        throw new AppError(503, "SEARCH_UNAVAILABLE", "Image search is not configured on this server");
+      }
+
+      const { category, status, limit } = req.validatedQuery;
+      const categorySlug = category ? categoryFilterSlug(category) : null;
+      const where = visibilityWhere({ status, categorySlug }, req.user);
+
+      queueMissingEmbeddings();
+
+      const candidates = await prisma.item.findMany({
+        where,
+        include: itemInclude,
+        orderBy: { createdAt: "desc" },
+        take: config.searchCandidateCap,
+      });
+
+      const matches = await rankIdsByImage(
+        req.file.buffer,
+        candidates.map((item) => item.id),
+        { mimetype: req.file.mimetype },
+      );
+
+      if (matches === null) {
+        throw new AppError(503, "SEARCH_UNAVAILABLE", "Image search is temporarily unavailable");
+      }
+
+      const byId = new Map(candidates.map((item) => [item.id, item]));
+      const results = matches
+        .slice(0, limit)
+        .map((match) => {
+          const item = byId.get(match.id);
+          return item ? { ...serializeItem(item), score: match.score } : null;
+        })
+        .filter(Boolean);
+
+      res.json({ data: results, limit, total: results.length, searchMode: "image" });
     } catch (err) {
       next(err);
     }
@@ -161,9 +277,27 @@ router.post("/", requireAuth, uploadImages, async (req, res, next) => {
       include: itemInclude,
     });
 
+    // Index in the background: a cold model must not delay the 201 response.
+    queueItemEmbedding(item.id);
+
     res.status(201).json({ data: item });
   } catch (err) {
     removeUploadedFiles(req.files ?? []);
+    next(err);
+  }
+});
+
+// POST /items/reindex — admin only. Backfills vectors for existing items and
+// for rows left stale by a model upgrade. Safe to re-run (idempotent upserts).
+router.post("/reindex", requireAuth, async (req, res, next) => {
+  try {
+    if (!isAdmin(req.user)) throw forbidden("Only an admin can reindex search data");
+    const limit = req.query.limit ? Number(req.query.limit) : null;
+    const result = await reindexItems({
+      limit: Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : null,
+    });
+    res.json({ data: result });
+  } catch (err) {
     next(err);
   }
 });
@@ -206,6 +340,11 @@ router.patch(
         data: updates,
         include: itemInclude,
       });
+
+      // Title/description changes invalidate the stored vector.
+      if (updates.title !== undefined || updates.description !== undefined) {
+        queueItemEmbedding(updated.id);
+      }
 
       res.json({ data: updated });
     } catch (err) {

@@ -1,16 +1,79 @@
-# React + Vite
+# Reclaim — Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite + Tailwind CSS 4.
 
-Currently, two official plugins are available:
+## Run
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev        # http://localhost:5173
+```
 
-## React Compiler
+The API must be running at **http://localhost:3445** (see the root `README.md`).
+CORS already allows `localhost` and `127.0.0.1` on any port.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Scripts
 
-## Expanding the ESLint configuration
+| Command | Does |
+|---|---|
+| `npm run dev` | Dev server with HMR |
+| `npm run build` | Production build to `dist/` |
+| `npm run preview` | Serve the production build |
+| `npm run lint` | ESLint |
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Layout
+
+```
+src/
+├── main.jsx
+├── App.jsx
+├── index.css                  Tailwind entry
+├── assets/
+└── components/reclaim/        Feature components
+    ├── index.js               barrel export
+    ├── Navbar.jsx
+    ├── HeroHeading.jsx
+    ├── SearchPrompt.jsx       search bar + Where? / When? (not wired to API yet)
+    ├── FloatingCards.jsx
+    ├── ItemCycle.jsx
+    ├── items.js               local mock data (LOST_ITEMS)
+    └── icons.jsx
+```
+
+Dev server runs on Vite's default port 5173.
+
+## Status
+
+The UI is currently a **static shell**. There are no API calls yet — `items.js`
+holds local mock data and `SearchPrompt.jsx` doesn't submit anywhere.
+
+## Wiring the API
+
+Everything goes through the Express API at `:3445`. Never call the AI service on
+`:8000` from the browser — it needs an API key and isn't CORS-enabled for it.
+
+| UI control | Request |
+|---|---|
+| Search box | `GET /items?q=<text>&mode=semantic&page=1&limit=12` |
+| Search-by-photo button | `POST /items/search-image` (multipart, field `image`) |
+| Filters only | `GET /items?category=...&status=...` |
+
+**Handle the fallback.** Every `GET /items` response includes `searchMode`:
+
+- `"semantic"` — AI-ranked results
+- `"keyword"` — the AI service was unavailable and the server fell back to plain
+  text matching; still HTTP 200, so no error handling is needed
+
+`POST /items/search-image` **can** return `503 SEARCH_UNAVAILABLE` — show a
+friendly message rather than a raw error.
+
+Semantic and photo search take ~0.3–1.5 s on CPU. Show a loading state.
+
+Full contract: `API_DOCUMENTATION.txt` at the repo root.
+
+## Known API gaps
+
+These are specified in the requirements but not implemented — don't build against
+them: `GET /me/summary`, `GET /claims/received`, `PATCH /auth/me`,
+`PATCH /auth/password`, cursor pagination, `sort`, `where`, `from`/`to` date
+range, multi-category filter. Use offset pagination (`page`/`limit`).

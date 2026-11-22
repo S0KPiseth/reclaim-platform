@@ -51,11 +51,25 @@ export const updateItemSchema = z
 
 export const listItemsQuerySchema = z.object({
   q: z.string().trim().max(200).optional(),
+  // "keyword" is plain SQL substring matching. "semantic" sends the query to
+  // the CLIP service, which also matches related wording ("purse" -> "wallet")
+  // and compares text against item *photos*. Falls back to keyword when the
+  // service is unavailable.
+  mode: z.enum(["keyword", "semantic"]).default("keyword"),
   // Matches either the category slug ("phone-charger") or its display name
   // ("Phone charger"); both are normalized to a slug server-side.
   category: z.string().trim().min(1).max(40).optional(),
   status: itemStatusEnum.default("OPEN"),
   page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
+// POST /items/search-image — query params for the image->image search.
+// No absolute score threshold: CLIP scores cluster too high for one to work, so
+// results are trimmed relative to the best hit (SEARCH_RELATIVE_MARGIN).
+export const searchImageQuerySchema = z.object({
+  category: z.string().trim().min(1).max(40).optional(),
+  status: itemStatusEnum.default("OPEN"),
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 

@@ -1,0 +1,542 @@
+================================================================================
+RECLAIM LOST & FOUND API — DOCUMENTATION
+================================================================================
+
+Version:      2.0 — 22 November 2026
+Base URL:     http://localhost:3445  (configurable via PORT env var)
+Content-Type: application/json (except uploads, which use multipart/form-data)
+Auth:         Protected routes require an "Authorization: Bearer <token>" header.
+
+CHANGES IN 2.0 (AI search phase)
+  + GET /items now accepts "mode=semantic" for CLIP-powered semantic search.
+  + GET /items responses now include a "searchMode" field.
+  + NEW  POST /items/search-image — find items by uploading a photo.
+  + NEW  POST /items/reindex — admin-only vector backfill.
+  + Item writes (create/update/add image/delete image) now index vectors in the
+    background. No API change: same status codes, same bodies.
+  See the "AI SEARCH" section near the end for the full behaviour, including
+  how results degrade when the AI service is unavailable.
+
+--------------------------------------------------------------------------------
+STANDARD RESPONSE FORMATS
+--------------------------------------------------------------------------------
+
+Success — envelope:
+  { "data": <result> }
+
+  List endpoints add pagination fields alongside "data":
+  { "data": [...], "page": 1, "limit": 20, "total": 123 }
+
+Error — envelope (always):
+  { "error": { "code": "<ERROR_CODE>", "message": "<human readable message>" } }
+
+  Error codes:
+    400  BAD_REQUEST, FILE_TOO_LARGE, TOO_MANY_FILES, UPLOAD_ERROR,
+         UNSUPPORTED_FILE_TYPE, INVALID_JSON, INVALID_STATUS_TRANSITION, NO_FILES
+    401  UNAUTHORIZED, INVALID_TOKEN, INVALID_CREDENTIALS
+    403  FORBIDDEN
+    404  NOT_FOUND
+    409  CONFLICT, EMAIL_TAKEN, ITEM_NOT_OPEN, CLAIM_EXISTS, CLAIM_NOT_PENDING,
+         CATEGORY_IN_USE, IMAGE_LIMIT_REACHED
+    422  VALIDATION_ERROR
+    500  INTERNAL_ERROR
+    503  SEARCH_UNAVAILABLE   (new — AI search not configured or temporarily down)
+
+--------------------------------------------------------------------------------
+ENUMS (used throughout)
+--------------------------------------------------------------------------------
+
+Role:        USER | ADMIN
+ItemStatus:  OPEN | CLAIMED | RETURNED | ARCHIVED
+ClaimStatus: PENDING | APPROVED | REJECTED | WITHDRAWN
+SearchMode:  keyword | semantic | image        (new — see AI SEARCH)
+
+================================================================================
+AUTH ENDPOINTS  (/auth)
+================================================================================
+
+1) POST /auth/register
+   Description: Create a new account and sign the user in immediately.
+   Auth:        None.
+   Request body (JSON):
+     {
+       "email":    "string, valid email (required, lowercased)",
+       "password": "string, min 8 chars (required)",
+       "name":     "string, 1-100 chars (required)",
+       "phone":    "string, 3-30 chars (optional)"
+     }
+   Success: 201 Created
+     {
+       "user":  { id, email, name, phone, role, createdAt, updatedAt },
+       "token": "JWT string"
+     }
+   NOTE: this endpoint does NOT use the {data:...} envelope.
+   Errors: 409 EMAIL_TAKEN; 422 VALIDATION_ERROR.
+
+2) POST /auth/login
+   Description: Authenticate an existing user.
+   Auth:        None.
+   Request body (JSON):
+     { "email": "string", "password": "string" }
+   Success: 200 OK
+     {
+       "user":  { id, email, name, phone, role, createdAt, updatedAt },
+       "token": "JWT string"
+     }
+   NOTE: this endpoint does NOT use the {data:...} envelope.
+   Errors: 401 INVALID_CREDENTIALS.
+
+3) GET /auth/me
+   Description: Return the currently authenticated user.
+   Auth:        Required (Bearer token).
+   Success: 200 OK
+     { "user": { id, email, name, phone, role, createdAt, updatedAt } }
+   Errors: 401 UNAUTHORIZED / INVALID_TOKEN.
+
+================================================================================
+ITEM ENDPOINTS  (/items)
+================================================================================
+
+Item object shape (as returned):
+  {
+    "id", "title", "description", "status", "foundLocation", "foundAt",
+    "handoverNote", "categoryId", "posterId", "createdAt", "updatedAt",
+    "images":   [ { id, itemId, url, position, createdAt } ],
+    "poster":   { id, name },
+    "category": { id, name, slug }
+  }
+  "claimCount" is added when the query includes claim counts.
+
+--------------------------------------------------------------------------------
+1) GET /items
+--------------------------------------------------------------------------------
+   Description: Public list with filtering, search and pagination.
+   Auth:        Optional. When authenticated, ARCHIVED items are visible to their
+                poster or an admin.
+
+   Query params:
+     q        (optional) search string. Behaviour depends on "mode" (see below).
+     mode     (optional) "keyword" | "semantic". Default "keyword".
+     category (optional) category slug OR display name
+     status   (optional) OPEN | CLAIMED | RETURNED | ARCHIVED. Default "OPEN".
+     page     (optional) integer >= 1. Default 1.
+     limit    (optional) integer 1-50. Default 20.
+
+   Success: 200 OK
+     {
+       "data":       [<Item>...],
+       "page":       1,
+       "limit":      20,
+       "total":      42,
+       "searchMode": "keyword"     // "keyword" | "semantic"
+     }
+
+   IMPORTANT — "searchMode" tells you which path actually ran:
+     - You asked for mode=keyword  -> "keyword"
+     - You asked for mode=semantic and the AI service worked -> "semantic"
+     - You asked for mode=semantic but the AI service was unavailable
+       -> "keyword" (the API falls back automatically and still returns 200)
+     Always check "searchMode" if the UI needs to label results differently.
+
+   mode=keyword  (default)
+     Literal, case-insensitive substring match: the whole q must appear in
+     title OR description. "purse" will NOT match "black leather wallet".
+
+   mode=semantic
+     The query is embedded by the CLIP service and ranked by similarity against
+     each item's text. Matches related wording, so "purse" does match
+     "black leather wallet". Results are trimmed to those close to the best hit.
+     Bias: recency is NOT considered — order is pure similarity.
+
+     Caveat for the UI: this model also compares against item *text*, so short
+     generic queries can surface loosely-related items. If total is larger than
+     expected for an obvious query, that is model behaviour, not a bug.
+
+   Errors: 403 FORBIDDEN (ARCHIVED without permission); 422 VALIDATION_ERROR
+           (e.g. mode not keyword/semantic).
+
+--------------------------------------------------------------------------------
+2) POST /items/search-image            *** NEW IN 2.0 ***
+--------------------------------------------------------------------------------
+   Description: Find items by uploading a photo (image -> image search).
+                Compares the uploaded photo against each item's stored photos.
+                The uploaded image is encoded in memory and is NEVER saved.
+   Auth:        Optional (same visibility rules as GET /items).
+
+   Content-Type: multipart/form-data
+   Form fields:
+     image   file (required). Field name MUST be "image".
+             jpg / png / webp, max 5 MB.
+
+   Query params:
+     category (optional) category slug OR display name
+     status   (optional) default "OPEN"
+     limit    (optional) integer 1-50. Default 20.
+     (There is intentionally no score threshold param: the service trims weak
+      matches itself relative to the best hit.)
+
+   Success: 200 OK
+     {
+       "data": [
+         {
+           ...<Item>,
+           "score": 0.9974        // cosine similarity, higher = more similar
+         }
+       ],
+       "limit": 20,
+       "total": 2,
+       "searchMode": "image"
+     }
+
+   Notes:
+     - Only items that have at least one photo can match.
+     - "data" is ordered best-match first.
+     - Typical good matches score 0.90+; the service keeps a small window near
+       the top score, so a short list is normal and expected.
+
+   Errors:
+     422 VALIDATION_ERROR      no file, or wrong field name
+     400 UNSUPPORTED_FILE_TYPE not jpg/png/webp
+     400 FILE_TOO_LARGE        over 5 MB
+     503 SEARCH_UNAVAILABLE    AI service not configured, still loading, or down
+
+--------------------------------------------------------------------------------
+3) POST /items/reindex                 *** NEW IN 2.0 ***
+--------------------------------------------------------------------------------
+   Description: Admin utility. Builds missing AI vectors for existing items and
+                rebuilds any that are stale after a model update. Idempotent.
+                Normally NOT needed: vectors are built automatically in the
+                background on writes and opportunistically during searches.
+   Auth:        Required (ADMIN only).
+
+   Query params:
+     limit (optional) index at most N items this call.
+
+   Success: 200 OK
+     { "data": { "enabled": true, "indexed": 8, "remaining": 0,
+                 "modelVersion": "v1" } }
+
+   Errors: 401 UNAUTHORIZED; 403 FORBIDDEN (not an admin).
+
+--------------------------------------------------------------------------------
+4) GET /items/mine
+--------------------------------------------------------------------------------
+   Description: List all items posted by the current user, including claim counts.
+   Auth:        Required.
+   Success: 200 OK
+     { "data": [ { ...<Item>, claimCount: N } ... ] }
+   Errors: 401 UNAUTHORIZED.
+
+--------------------------------------------------------------------------------
+5) GET /items/:id
+--------------------------------------------------------------------------------
+   Description: Fetch a single item by id.
+   Auth:        Optional (ARCHIVED items only for poster/admin).
+   Success: 200 OK
+     { "data": { <Item> } }
+   Errors: 404 NOT_FOUND.
+
+--------------------------------------------------------------------------------
+6) POST /items
+--------------------------------------------------------------------------------
+   Description: Create a new item with optional images.
+                AI vectors are built in the background — you do NOT need to wait
+                for them, and this endpoint does not change behaviour when the
+                AI service is down.
+   Auth:        Required.
+   Content-Type: multipart/form-data.
+   Form fields:
+     title         string, 3-150 chars (required)
+     description   string, 10-5000 chars (required)
+     category      string, 2-40 chars (required; existing name or a new one)
+     foundLocation string, 1-200 chars (required)
+     foundAt       valid date (required)
+     handoverNote  string, up to 1000 chars (optional)
+     images        file(s), field name "images", up to 5
+                   (jpg/png/webp, max 5 MB each)
+   Success: 201 Created
+     { "data": { <Item> } }
+   Errors: 422 VALIDATION_ERROR; 400 FILE_TOO_LARGE / TOO_MANY_FILES /
+           UNSUPPORTED_FILE_TYPE; 401 UNAUTHORIZED.
+
+--------------------------------------------------------------------------------
+7) PATCH /items/:id
+--------------------------------------------------------------------------------
+   Description: Update an item (poster or admin).
+                Category, if provided, is resolved/created automatically.
+                Changing title or description re-indexes the AI vector in the
+                background.
+                Status changes are restricted to valid transitions:
+                  OPEN     -> RETURNED | ARCHIVED
+                  CLAIMED  -> RETURNED | ARCHIVED
+                  RETURNED -> ARCHIVED
+                  ARCHIVED -> (none)
+   Auth:        Required (poster or admin).
+   Request body (JSON, all optional but at least one required):
+     {
+       "title":         "string, 3-150 chars",
+       "description":   "string, 10-5000 chars",
+       "category":      "string, 2-40 chars",
+       "status":        "OPEN|CLAIMED|RETURNED|ARCHIVED",
+       "foundLocation": "string, 1-200 chars",
+       "foundAt":       "valid date",
+       "handoverNote":  "string, <=1000 chars, or null"
+     }
+   Success: 200 OK
+     { "data": { <Item> } }
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN; 400 INVALID_STATUS_TRANSITION;
+           422 VALIDATION_ERROR.
+
+--------------------------------------------------------------------------------
+8) DELETE /items/:id
+--------------------------------------------------------------------------------
+   Description: Soft-delete by setting status to ARCHIVED (poster or admin).
+   Auth:        Required (poster or admin).
+   Success: 200 OK
+     { "data": { <Item with status ARCHIVED> } }
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN.
+
+================================================================================
+CLAIM ENDPOINTS
+================================================================================
+
+Claim object shape:
+  {
+    "id", "itemId", "claimantId", "message", "status", "createdAt", "updatedAt",
+    "claimant": { id, name }                  // public view
+    // or
+    "claimant": { id, name, email, phone }    // poster/admin view
+    "item":     { id, title, category, status, foundLocation, foundAt, posterId }
+  }
+
+1) POST /items/:id/claims
+   Description: Submit a claim on an OPEN item (any logged-in user except the poster).
+   Auth:        Required.
+   Request body (JSON):
+     { "message": "string, 10-2000 chars (required)" }
+   Success: 201 Created
+     { "data": { <Claim> } }   // claimant is public (id, name)
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN (own item); 409 ITEM_NOT_OPEN;
+           409 CLAIM_EXISTS; 422 VALIDATION_ERROR.
+
+2) GET /items/:id/claims
+   Description: List all claims for an item (poster or admin), with claimant
+                email/phone.
+   Auth:        Required.
+   Success: 200 OK
+     { "data": [ { <Claim with claimant {id,name,email,phone}> } ... ] }
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN.
+
+3) GET /claims/mine
+   Description: Claims made by the current user, with item details and images.
+                When a claim is APPROVED, the poster's email/phone are exposed
+                as "posterContact".
+   Auth:        Required.
+   Success: 200 OK
+     { "data": [
+         {
+           ...<Claim>,
+           "item": { ...itemSummary, images: [...], poster: {id, name} },
+           "posterContact": { "email": "...", "phone": "..." }  // if APPROVED
+         }
+       ] }
+   Errors: 401 UNAUTHORIZED.
+
+4) PATCH /claims/:id
+   Description: Approve/reject a claim (poster or admin) or withdraw it (claimant
+                or admin). Only PENDING claims can change.
+                Approving sets the item to CLAIMED and auto-rejects all other
+                PENDING claims on that item (single transaction).
+   Auth:        Required.
+   Request body (JSON):
+     { "status": "APPROVED" | "REJECTED" | "WITHDRAWN" }
+   Success: 200 OK
+     { "data": { <Claim> } }
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN; 409 CLAIM_NOT_PENDING;
+           409 ITEM_NOT_OPEN; 422 VALIDATION_ERROR.
+
+================================================================================
+CATEGORY ENDPOINTS  (/categories)
+================================================================================
+
+Category object shape:
+  { "id", "name", "slug", "itemCount" }
+
+1) GET /categories
+   Description: Public list of all categories.
+   Auth:        None.
+   Query params:
+     q (optional) case-insensitive name filter.
+   Success: 200 OK
+     { "data": [ { id, name, slug, itemCount } ... ] }
+   Errors: 500 INTERNAL_ERROR on failure.
+
+2) POST /categories
+   Description: Create a category (any logged-in user). Idempotent: if the same
+                normalized slug exists, that category is returned instead.
+   Auth:        Required.
+   Request body (JSON):
+     { "name": "string, 2-40 chars, must contain a letter or number" }
+   Success: 201 Created (new) or 200 OK (existing)
+     { "data": { id, name, slug, itemCount } }
+   Errors: 422 VALIDATION_ERROR; 401 UNAUTHORIZED.
+
+3) DELETE /categories/:id
+   Description: Delete a category (admin only). Fails if any item still uses it.
+   Auth:        Required (admin).
+   Success: 200 OK
+     { "data": { "id": "<id>", "deleted": true } }
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN; 409 CATEGORY_IN_USE.
+
+================================================================================
+IMAGE ENDPOINTS
+================================================================================
+
+Image object shape:
+  { "id", "itemId", "url", "position", "createdAt" }
+
+1) POST /items/:id/images
+   Description: Add images to an item (poster or admin), respecting the 5-image
+                total per item. Re-indexes the AI vector in the background.
+   Auth:        Required (poster or admin).
+   Content-Type: multipart/form-data.
+   Form fields:
+     images  file(s), field name "images" (required; jpg/png/webp, 5 MB each)
+   Success: 201 Created
+     { "data": [ <Image>... ] }   // all images for the item, ordered by position
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN; 400 NO_FILES / IMAGE_LIMIT_REACHED /
+           FILE_TOO_LARGE / TOO_MANY_FILES / UNSUPPORTED_FILE_TYPE.
+
+2) DELETE /images/:id
+   Description: Delete an image (DB row + file on disk). Re-indexes the AI vector
+                in the background.
+   Auth:        Required (poster or admin).
+   Success: 200 OK
+     { "data": { "id": "<id>", "deleted": true } }
+   Errors: 404 NOT_FOUND; 403 FORBIDDEN.
+
+================================================================================
+AI SEARCH  — FRONTEND GUIDANCE
+================================================================================
+
+The AI search runs as a separate Python service. The REST API calls it for you;
+the frontend only ever talks to the REST API at :3445. You never call the Python
+service directly.
+
+--------------------------------------------------------------------------------
+Which endpoint for which UI control
+--------------------------------------------------------------------------------
+
+  Search bar (text/sentence typing)
+      GET /items?q=<text>&mode=semantic
+      -> Use this for the main search box. Prefer semantic; it handles natural
+         phrasing and synonyms.
+
+  Camera / photo search button
+      POST /items/search-image   (multipart, field "image")
+      -> Use this for "search by photo". This is real image-to-image matching.
+
+  Filters only (no text)
+      GET /items?category=...&status=...
+      -> Do not send mode; keyword is fine and cheaper.
+
+--------------------------------------------------------------------------------
+Suggested UI wiring
+--------------------------------------------------------------------------------
+
+  1. Main search input -> GET /items?q=...&mode=semantic&page=1&limit=12
+  2. Read "searchMode" in the response.
+       "semantic" -> results are AI-ranked; label the list "Best match".
+       "keyword"  -> AI was unavailable and the server fell back. You can show
+                     results normally, optionally with a quiet note such as
+                     "Showing text matches" so the change is not silent.
+  3. Photo search -> POST /items/search-image. Each result has a "score";
+     display order is already best-first, so you can ignore "score" in the UI.
+  4. Always keep the q/mode values in the URL query string so views are
+     shareable and the back button works.
+
+--------------------------------------------------------------------------------
+Response-time expectations
+--------------------------------------------------------------------------------
+
+  keyword    : fast (single SQL query)
+  semantic   : slower — the query text is embedded by the AI service.
+               Expect roughly 0.3-1.5 s per request on a CPU-only dev machine.
+               Show a loading state; do not assume instant.
+  search-image: similar to semantic, plus upload time for the image.
+
+--------------------------------------------------------------------------------
+Failure behaviour (important)
+--------------------------------------------------------------------------------
+
+  GET /items (semantic)
+     NEVER returns 5xx because of the AI service. If the service is down it
+     silently falls back to keyword search and returns 200 with
+     "searchMode": "keyword". No error handling required on the client.
+
+  POST /items/search-image
+     CAN return 503 SEARCH_UNAVAILABLE when the AI service is unavailable,
+     because there is no keyword equivalent of "find by photo". Handle this:
+     show a friendly message (e.g. "Photo search is unavailable right now")
+     rather than a raw error.
+
+--------------------------------------------------------------------------------
+What NOT to do
+--------------------------------------------------------------------------------
+
+  - Do not call the Python service (port 8000) from the browser. It requires an
+    API key and is not CORS-enabled for public use.
+  - Do not poll POST /items/reindex from the client. It is an admin tool.
+  - Do not send "mode=semantic" with an empty q. It behaves like a plain list.
+
+================================================================================
+MISCELLANEOUS
+================================================================================
+
+GET /
+  Description: Health/status check.
+  Auth:        None.
+  Success: 200 OK
+    { "name": "Reclaim Lost & Found API", "status": "ok" }
+
+Static uploads:
+  Uploaded images are served at  /uploads/<filename>  (public, no auth).
+
+CORS:
+  Allowed origins are localhost and 127.0.0.1 on any port (http and https).
+  Run the frontend on localhost, or ask the backend team to add your origin.
+
+================================================================================
+AUTHENTICATION NOTES
+================================================================================
+
+- Token is a JSON Web Token (JWT) with 7-day expiry.
+- Send it via:  Authorization: Bearer <token>
+- Public endpoints that accept optional auth change their response for
+  authenticated users (e.g. revealing own ARCHIVED items). An invalid/expired
+  token on those endpoints is ignored (treated as anonymous).
+
+================================================================================
+LOCAL SETUP QUICK REFERENCE
+================================================================================
+
+Option A — Docker (recommended, one command)
+  From the repository root:
+      docker compose up --build
+  Then the API is at http://localhost:3445 and is already migrated.
+  Requires the CLIP model at server/model/ (ask the backend team for it).
+
+Option B — Native
+  cd server
+  npm install
+  npx prisma migrate deploy
+  npm run dev            # API on :3445
+  # optional, for AI search:
+  cd embedding-service && pip install -r requirements.txt && ./run.sh
+
+Seed data:  npm run db:seed   (sample users, items, claims)
+  Seeded admin login: admin@reclaim.test / password123
+
+================================================================================
+END OF DOCUMENT
+================================================================================

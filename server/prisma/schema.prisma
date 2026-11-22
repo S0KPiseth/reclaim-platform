@@ -70,12 +70,40 @@ model Item {
   images   ItemImage[]
   claims   Claim[]
 
+  // CLIP search state. Kept in its own table so Item stays lean and vectors
+  // can be re-embedded independently of item edits.
+  embedding ItemEmbedding?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status, createdAt])
   @@index([categoryId])
   @@index([posterId])
+}
+
+/// CLIP vectors for one item. Stored as Float[] (Postgres double precision[])
+/// rather than pgvector so no extension is required; ranking happens in the
+/// Python service. Only rows with the current modelVersion are comparable.
+///
+/// Two vectors are kept because CLIP's text-text and image-image similarities
+/// live at different score scales. Querying text against item *text* vectors
+/// scores consistently higher (~0.57) than a genuine text->photo match (~0.41),
+/// so a single fused vector lets wordy text-only items drown out real photo
+/// matches. Separating them means each search compares like with like:
+///   textVector  - text→text semantic search
+///   imageVector - text→image and image→image search
+model ItemEmbedding {
+  itemId         String   @id
+  item           Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  textVector     Float[]
+  imageVector    Float[]  // empty when the item has no photos
+  modelVersion   String
+  dim            Int      @default(512)
+  hasPhotos      Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  @@index([modelVersion])
 }
 
 model ItemImage {

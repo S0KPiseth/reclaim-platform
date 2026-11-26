@@ -1,40 +1,88 @@
-import { useEffect } from "react";
-import {
-  FloatingCards,
-  HeroHeading,
-  ItemCycle,
-  Navbar,
-  SearchPrompt,
-} from "./components/reclaim";
+import AppShell from "./components/layout/AppShell";
+import RequireAuth from "./components/layout/RequireAuth";
+import { AuthProvider } from "./context/AuthContext";
+import { ConfirmProvider } from "./context/ConfirmContext";
+import { ToastProvider } from "./context/ToastContext";
+import { RouterProvider, useLocation } from "./lib/router";
+import BrowsePage from "./pages/BrowsePage";
+import HomePage from "./pages/HomePage";
+import HowItWorksPage from "./pages/HowItWorksPage";
+import ItemPage from "./pages/ItemPage";
+import LoginPage from "./pages/LoginPage";
+import MyClaimsPage from "./pages/MyClaimsPage";
+import MyItemsPage from "./pages/MyItemsPage";
+import NotFoundPage from "./pages/NotFoundPage";
+import ProfilePage from "./pages/ProfilePage";
+import RegisterPage from "./pages/RegisterPage";
+import ReportPage from "./pages/ReportPage";
+
+function Routes() {
+  const { pathname } = useLocation();
+  const path = pathname.replace(/\/+$/, "") || "/";
+
+  if (path === "/") return <HomePage />;
+  if (path === "/browse") return <BrowsePage />;
+  if (path === "/how-it-works") return <HowItWorksPage />;
+  if (path === "/login") return <LoginPage />;
+  if (path === "/register") return <RegisterPage />;
+
+  if (path === "/report") {
+    return (
+      <RequireAuth>
+        <ReportPage />
+      </RequireAuth>
+    );
+  }
+
+  if (path === "/my-items") {
+    return (
+      <RequireAuth>
+        <MyItemsPage />
+      </RequireAuth>
+    );
+  }
+
+  if (path === "/my-claims") {
+    return (
+      <RequireAuth>
+        <MyClaimsPage />
+      </RequireAuth>
+    );
+  }
+
+  if (path === "/profile") {
+    return (
+      <RequireAuth>
+        <ProfilePage />
+      </RequireAuth>
+    );
+  }
+
+  if (/^\/items\/[^/]+\/edit$/.test(path)) {
+    return (
+      <RequireAuth>
+        <ReportPage key={path} />
+      </RequireAuth>
+    );
+  }
+
+  if (/^\/items\/[^/]+$/.test(path)) return <ItemPage key={path} />;
+
+  return <NotFoundPage />;
+}
 
 export default function App() {
-  useEffect(() => {
-    document.title = "Reclaim — Lost & Found";
-  }, []);
-
   return (
-    <main className="relative flex h-screen w-full flex-col overflow-hidden bg-[linear-gradient(160deg,#2f6bff_0%,#1646d6_45%,#0a2a8f_100%)] px-10 pb-[30px] font-sans text-white box-border max-[900px]:px-5 max-[900px]:pb-5">
-      <img
-        src="/images/reclaim-wordmark-white.svg"
-        alt=""
-        aria-hidden="true"
-        width={3665}
-        height={1036}
-        className="pointer-events-none absolute top-[-44px] left-1/2 h-auto w-[1180px] max-w-[90%] -translate-x-1/2 opacity-[0.09] select-none"
-      />
-
-      {/* Pass the signed-in user's avatar, e.g. avatarSrc={user.avatarUrl} */}
-      <Navbar activeHref="/" />
-
-      <section className="relative z-1 flex min-h-0 flex-1 flex-col items-center justify-center pt-2">
-        <HeroHeading />
-        <div className="relative mt-3 flex min-h-0 w-full flex-1 items-center justify-center">
-          <ItemCycle />
-          <FloatingCards />
-        </div>
-      </section>
-
-      <SearchPrompt />
-    </main>
+    <RouterProvider>
+      <AuthProvider>
+        <ToastProvider>
+          <ConfirmProvider>
+            <AppShell>
+              <Routes />
+            </AppShell>
+          </ConfirmProvider>
+        </ToastProvider>
+      </AuthProvider>
+    </RouterProvider>
   );
 }

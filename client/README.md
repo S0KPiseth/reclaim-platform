@@ -1,6 +1,12 @@
 # Reclaim — Frontend
 
-React 19 + Vite + Tailwind CSS 4.
+React 19 + Vite + Tailwind CSS 4. The whole app lives in this folder and talks
+only to the Express API in `../server` (default `:3445`). It never calls the
+Python embedding service on `:8000` — that needs a shared secret and is not
+CORS-enabled for browsers.
+
+The visual language is the blue-glass landing design (gradient canvas, frosted
+cards, Plus Jakarta Sans, white rounded panels); every screen uses it.
 
 ## Run
 
@@ -9,8 +15,17 @@ npm install
 npm run dev        # http://localhost:5173
 ```
 
-The API must be running at **http://localhost:3445** (see the root `README.md`).
-CORS already allows `localhost` and `127.0.0.1` on any port.
+The API must be running (see the root `README.md`). CORS already allows
+`localhost` / `127.0.0.1` on any port.
+
+If the API is elsewhere, copy `.env.example` to `.env` and set `VITE_API_URL`.
+The default is the host serving the page on port 3445 (normally
+`http://localhost:3445`) — same-site, so the session cookie is sent. Use
+`localhost` consistently: a page on `127.0.0.1` calling `localhost` is
+cross-site and the `SameSite=Lax` cookie is dropped.
+
+Seed logins (after `cd ../server && npm run db:seed`): `sothy@reclaim.test`,
+`dada@reclaim.test`, `admin@reclaim.test` — password `password123`.
 
 ## Scripts
 
@@ -21,59 +36,92 @@ CORS already allows `localhost` and `127.0.0.1` on any port.
 | `npm run preview` | Serve the production build |
 | `npm run lint` | ESLint |
 
+`vite preview` and the dev server both fall back to `index.html`, so deep links
+like `/items/<id>` work. If you host `dist/` on a static server, add an SPA
+rewrite to `index.html`.
+
+## Screens
+
+| Route | What it does | API calls |
+|---|---|---|
+| `/` | Landing: hero, cycling items, search bar, photo search, category/status picks | `GET /categories` |
+| `/browse` | Search + category/status filters, pagination, photo search | `GET /items`, `GET /categories`, `POST /items/search-image` |
+| `/items/:id` | Detail, gallery, claim form, owner claim inbox, approve/reject, photos, status | `GET /items/:id`, `POST /items/:id/claims`, `GET /items/:id/claims`, `PATCH /claims/:id`, `PATCH /items/:id`, `DELETE /items/:id`, `POST /items/:id/images`, `DELETE /images/:id` |
+| `/report` | Report a found item with photos | `GET /categories`, `POST /items` |
+| `/items/:id/edit` | Edit a post, replace/remove photos | `GET /items/:id`, `PATCH /items/:id`, `POST /items/:id/images`, `DELETE /images/:id` |
+| `/my-items` | Your posts, claim counts, edit/remove | `GET /items/mine`, `DELETE /items/:id` |
+| `/my-claims` | Claims you sent; withdraw | `GET /claims/mine`, `PATCH /claims/:id` |
+| `/my-claims?tab=received` | Claim requests on your finds; approve/reject | `GET /items/mine`, `GET /items/:id/claims`, `PATCH /claims/:id` |
+| `/login`, `/register` | Sign in / create an account | `POST /auth/login`, `POST /auth/register` |
+| `/profile` | Account details, links, log out; admins also get AI reindex + category management | `GET /auth/me`, `POST /auth/logout`, `POST /items/reindex`, `GET/POST /categories`, `DELETE /categories/:id` |
+| `/how-it-works` | Static explainer | — |
+| `*` | 404 state | — |
+
+Protected routes (`/report`, `/my-items`, `/my-claims`, `/profile`,
+`/items/:id/edit`) redirect to `/login?next=…` and return afterwards.
+
 ## Layout
 
 ```
 src/
 ├── main.jsx
-├── App.jsx
-├── index.css                  Tailwind entry
-├── assets/
-└── components/reclaim/        Feature components
-    ├── index.js               barrel export
-    ├── Navbar.jsx
-    ├── HeroHeading.jsx
-    ├── SearchPrompt.jsx       search bar + Where? / When? (not wired to API yet)
-    ├── FloatingCards.jsx
-    ├── ItemCycle.jsx
-    ├── items.js               local mock data (LOST_ITEMS)
-    └── icons.jsx
+├── App.jsx                    providers + route table
+├── index.css                  Tailwind v4 theme + component classes
+├── lib/
+│   ├── api.js                 fetch wrapper (cookie session), error envelope
+│   ├── limits.js              upload limits mirrored from the server
+│   ├── router.jsx             tiny history router (Link, navigate, hooks)
+│   ├── format.js              dates, labels, initials, safe redirects
+│   ├── photoSearch.js         hands a File from home to /browse
+│   └── usePageTitle.js
+├── context/
+│   ├── AuthContext.jsx        login/register/logout, /auth/me bootstrap
+│   ├── ToastContext.jsx       toast stack
+│   └── ConfirmContext.jsx     promise-based confirm dialog
+├── components/
+│   ├── reclaim/               landing design + shared icons
+│   ├── layout/                AppShell, Navbar, Footer, RequireAuth
+│   └── ui/                    ItemCard, StatusBadge, Pagination, states…
+└── pages/                     Home, Browse, Item, Report, MyItems,
+                               MyClaims, Profile, Auth, HowItWorks, 404
 ```
 
-Dev server runs on Vite's default port 5173.
+## Behaviour worth knowing
 
-## Status
+- **Semantic search** is the default for the main search box
+  (`mode=semantic`). Every `GET /items` response carries `searchMode`; when the
+  AI service is down the API falls back to keyword and still returns 200. The
+  browse page labels that case (“Smart search is offline, so these are keyword
+  matches.”) instead of failing.
+- **Photo search** goes to `POST /items/search-image`. It can return
+  `503 SEARCH_UNAVAILABLE`; the UI shows a friendly message and offers text
+  search. Uploaded search photos are never stored — the API encodes them in
+  memory. A selected photo is kept in memory between routes so Back returns to
+  the same results; a reload clears it (a `File` cannot live in a URL).
+- **Auth** is a server-side session. `POST /auth/login` / `/auth/register` set
+  an httpOnly `reclaim.sid` cookie; every request uses
+  `credentials: "include"`, so no token is ever stored in JavaScript. A cached
+  copy of the public user is kept in `localStorage` (`reclaim.user`) for instant
+  paint and revalidated with `GET /auth/me` on each load. Any `401` clears the
+  cache, bounces protected screens to login, and `POST /auth/logout` expires the
+  cookie.
+- **Uploads** accept JPG/PNG up to 2 MB, **1 per item**, matching
+  `server/src/config.js` and mirrored in `src/lib/limits.js`. Images are
+  rendered only from `/uploads/<safe-name>` resolved against `VITE_API_URL`.
+- **Claim rules** are enforced by the API; the UI mirrors them (owner cannot
+  claim their own item, only `PENDING` claims can change, only `OPEN` items can
+  be approved, archived items are hidden from the board).
+- **Status changes** use the allowed transitions: `OPEN/CLAIMED → RETURNED`,
+  then `→ ARCHIVED`; “Remove post” is the soft-delete (archive).
 
-The UI is currently a **static shell**. There are no API calls yet — `items.js`
-holds local mock data and `SearchPrompt.jsx` doesn't submit anywhere.
+## API gaps handled by the UI
 
-## Wiring the API
+- `GET /claims/received` does not exist, so the “Requests on my finds” tab fans
+  out over `GET /items/mine` + `GET /items/:id/claims` (fine for normal volumes).
+- `PATCH /auth/me` / `PATCH /auth/password` do not exist, so the profile screen
+  is read-only and says so.
+- No notification endpoint: the header bell opens your claims inbox.
+- No cursor pagination, `sort`, `where`, or date-range params: the browse screen
+  uses offset `page`/`limit` and single-category/status filters.
 
-Everything goes through the Express API at `:3445`. Never call the AI service on
-`:8000` from the browser — it needs an API key and isn't CORS-enabled for it.
-
-| UI control | Request |
-|---|---|
-| Search box | `GET /items?q=<text>&mode=semantic&page=1&limit=12` |
-| Search-by-photo button | `POST /items/search-image` (multipart, field `image`) |
-| Filters only | `GET /items?category=...&status=...` |
-
-**Handle the fallback.** Every `GET /items` response includes `searchMode`:
-
-- `"semantic"` — AI-ranked results
-- `"keyword"` — the AI service was unavailable and the server fell back to plain
-  text matching; still HTTP 200, so no error handling is needed
-
-`POST /items/search-image` **can** return `503 SEARCH_UNAVAILABLE` — show a
-friendly message rather than a raw error.
-
-Semantic and photo search take ~0.3–1.5 s on CPU. Show a loading state.
-
-Full contract: `API_DOCUMENTATION.txt` at the repo root.
-
-## Known API gaps
-
-These are specified in the requirements but not implemented — don't build against
-them: `GET /me/summary`, `GET /claims/received`, `PATCH /auth/me`,
-`PATCH /auth/password`, cursor pagination, `sort`, `where`, `from`/`to` date
-range, multi-category filter. Use offset pagination (`page`/`limit`).
+Full REST contract: `../docs/API_DOCUMENTATION.txt`.

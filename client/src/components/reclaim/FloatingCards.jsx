@@ -1,4 +1,5 @@
 import { ArrowRightIcon, SparkleIcon, WalletIcon } from "./icons";
+import { Link } from "../../lib/router";
 
 /** The frosted cards that float around the item cycle. Place inside the hero stage. */
 export default function FloatingCards() {
@@ -29,13 +30,13 @@ export default function FloatingCards() {
         </div>
       </div>
 
-      <a
-        href="/report"
+      <Link
+        to="/report"
         className="rc-glass absolute bottom-[6%] left-[6%] flex items-center gap-2.5 rounded-full px-[18px] py-3 text-sm leading-[inherit] font-semibold text-white no-underline hover:opacity-85 max-[1100px]:hidden"
       >
         Found something? Report it
         <ArrowRightIcon size={16} />
-      </a>
+      </Link>
     </>
   );
 }

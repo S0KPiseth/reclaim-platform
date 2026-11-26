@@ -19,7 +19,7 @@ export default function ItemCycle({ items = LOST_ITEMS, secondsPerItem = 3 }) {
   const keyframes = `@keyframes ${CYCLE_KEYFRAMES}{0%{opacity:0;transform:translateY(24px) scale(.88)}${fadeIn}%{opacity:1;transform:none}${holdEnd}%{opacity:1;transform:none}${out}%{opacity:0;transform:translateY(-24px) scale(.88)}100%{opacity:0}}`;
 
   return (
-    <div className="relative aspect-square h-full max-h-[360px] rounded-full border border-white/30 bg-[radial-gradient(circle_at_50%_38%,rgb(255_255_255/0.3),rgb(255_255_255/0.06)_70%)]">
+    <div className="relative aspect-square size-[clamp(220px,36vh,360px)] rounded-full border border-white/30 bg-[radial-gradient(circle_at_50%_38%,rgb(255_255_255/0.3),rgb(255_255_255/0.06)_70%)]">
       <style>{keyframes}</style>
       <div
         className="absolute -inset-[34px] rounded-full border border-white/16"

@@ -89,7 +89,7 @@ createdb reclaim
 
 # 2. API
 cd server
-cp .env.example .env        # then set DATABASE_URL and JWT_SECRET
+cp .env.example .env        # then set DATABASE_URL and SESSION_SECRET
 npm install
 npx prisma migrate deploy
 npm run dev                 # API on :3445

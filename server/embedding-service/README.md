@@ -22,14 +22,21 @@ is what makes text→image and image→image possible with a single model.
 
 ```bash
 cd server/embedding-service
-pip install -r requirements.txt
-pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU wheel
-cp .env.example .env      # optional; set EMBEDDING_API_KEY
-python -m uvicorn service:app --port 8000
-# or: ./run.sh   /   run.bat
+./setup.sh                # creates .venv + installs requirements + torch
+./run.sh                  # starts uvicorn on 127.0.0.1:8000
 ```
 
-Model loading takes a few seconds. `/health` returns `"loading"` until ready.
+`./setup.sh` needs Python 3.10+ (macOS system `python3` may be 3.9 — install
+`brew install python@3.11`). `run.sh` prefers `.venv`, so no activation is
+needed. `run.bat` is the Windows equivalent (install the deps with pip first).
+
+Model loading takes a few seconds. `/health` returns `{"status":"loading"}`
+until ready, then `{"status":"ok", ...}`.
+
+**The Express API only uses the service when `EMBEDDING_URL` is set** in
+`server/.env` (e.g. `EMBEDDING_URL="http://127.0.0.1:8000"`). Restart `npm run
+dev`, then backfill existing items once via `POST /items/reindex` as an admin
+(or just search — missing vectors are queued in the background).
 
 **`MODEL_DIR` is never hardcoded.** If unset it resolves to `server/model`
 via `settings.py`, which is why the model folder needs no path in any config.

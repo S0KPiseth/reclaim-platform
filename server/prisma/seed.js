@@ -108,6 +108,44 @@ async function main() {
       status: "RETURNED",
       handoverNote: "Returned to owner after verifying prescription receipt.",
     },
+    {
+      title: "Navy blue hoodie with white drawstrings",
+      description:
+        "Medium-sized navy pullover hoodie left on the back row of Lecture Hall A after the afternoon seminar. No logo on the chest.",
+      category: "Clothing",
+      foundLocation: "Lecture Hall A, back row",
+      foundAt: daysAgo(2),
+      posterId: dada.id,
+    },
+    {
+      title: "White wireless earbuds charging case",
+      description:
+        "Found a white wireless earbuds case (both earbuds inside) near the student lounge vending machine. Small scratch on the lid.",
+      category: "Electronics",
+      foundLocation: "Student lounge, near vending machine",
+      foundAt: daysAgo(3),
+      posterId: admin.id,
+    },
+    {
+      title: "Spiral-bound notebook with physics notes",
+      description:
+        "A5 green spiral notebook filled with handwritten physics formulas and a blue gel pen clipped to the cover.",
+      category: "Stationery",
+      foundLocation: "Science Building, 2nd floor study desk",
+      foundAt: daysAgo(5),
+      posterId: sothy.id,
+    },
+    {
+      title: "Black canvas backpack with brass zippers",
+      description:
+        "Left beside the bicycle rack outside the gym. Contains an empty lunchbox and a yellow rain poncho in the front pocket.",
+      category: "Bags",
+      foundLocation: "Campus gym, north bicycle rack",
+      foundAt: daysAgo(7),
+      posterId: dada.id,
+      status: "RETURNED",
+      handoverNote: "Owner identified the lunchbox and picked it up at the front desk.",
+    },
   ];
 
   // Categories are poster-defined: create them on the fly from the seed data.

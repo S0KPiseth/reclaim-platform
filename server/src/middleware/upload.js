@@ -9,7 +9,6 @@ fs.mkdirSync(uploadDir, { recursive: true });
 const allowedMime = new Map([
   ["image/jpeg", ".jpg"],
   ["image/png", ".png"],
-  ["image/webp", ".webp"],
 ]);
 
 const storage = multer.diskStorage({
@@ -22,12 +21,12 @@ const storage = multer.diskStorage({
 
 const fileFilter = (_req, file, cb) => {
   if (!allowedMime.has(file.mimetype)) {
-    return cb(new Error("Only jpg, png and webp images are allowed"));
+    return cb(new Error("Only JPEG and PNG images are allowed"));
   }
   cb(null, true);
 };
 
-// Accepts up to 5 files in the field named "images".
+// Accepts at most 1 optional JPEG/PNG file (up to 2 MB) in the field named "images".
 export const uploadImages = multer({
   storage,
   fileFilter,

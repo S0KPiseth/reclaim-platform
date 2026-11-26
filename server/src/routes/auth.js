@@ -1,7 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { prisma } from "../db.js";
-import { publicUser, requireAuth, signToken } from "../middleware/auth.js";
+import { destroySession, establishSession, publicUser, requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import { conflict, unauthorized } from "../middleware/errors.js";
 import { loginSchema, registerSchema } from "../schemas/index.js";
@@ -20,7 +20,8 @@ router.post("/register", validate(registerSchema), async (req, res, next) => {
       data: { email, passwordHash, name, phone },
     });
 
-    res.status(201).json({ user: publicUser(user), token: signToken(user) });
+    await establishSession(req, user);
+    res.status(201).json({ user: publicUser(user) });
   } catch (err) {
     next(err);
   }
@@ -35,7 +36,17 @@ router.post("/login", validate(loginSchema), async (req, res, next) => {
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) throw unauthorized("Invalid email or password", "INVALID_CREDENTIALS");
 
-    res.json({ user: publicUser(user), token: signToken(user) });
+    await establishSession(req, user);
+    res.json({ user: publicUser(user) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/logout", async (req, res, next) => {
+  try {
+    await destroySession(req, res);
+    res.json({ ok: true, message: "Logged out" });
   } catch (err) {
     next(err);
   }

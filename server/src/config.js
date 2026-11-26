@@ -6,15 +6,26 @@ function required(name) {
   return value;
 }
 
+function requiredAny(names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value) return value;
+  }
+  throw new Error(`Missing required environment variable: ${names[0]}`);
+}
+
 export const config = {
   databaseUrl: required("DATABASE_URL"),
-  jwtSecret: required("JWT_SECRET"),
+  // Prefer SESSION_SECRET; fall back to JWT_SECRET so existing .env / Docker configs keep working.
+  sessionSecret: requiredAny(["SESSION_SECRET", "JWT_SECRET"]),
+  sessionCookieName: "reclaim.sid",
+  sessionMaxAgeMs: 7 * 24 * 60 * 60 * 1000, // 7 days
+  cookieSecure: process.env.COOKIE_SECURE === "true",
   port: Number(process.env.PORT ?? 3445),
-  jwtExpiresIn: "7d",
   uploadDir: "uploads",
   publicPathPrefix: "/uploads",
-  maxImagesPerItem: 5,
-  maxImageBytes: 5 * 1024 * 1024, // 5 MB
+  maxImagesPerItem: 1,
+  maxImageBytes: 2 * 1024 * 1024, // 2 MB
 
   // Embedding microservice (server/embedding-service). Optional: when
   // EMBEDDING_URL is empty, search falls back to SQL substring matching and

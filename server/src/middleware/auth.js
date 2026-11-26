@@ -1,13 +1,6 @@
-import jwt from "jsonwebtoken";
 import { config } from "../config.js";
 import { prisma } from "../db.js";
 import { forbidden, unauthorized } from "./errors.js";
-
-export function signToken(user) {
-  return jwt.sign({ sub: user.id, role: user.role }, config.jwtSecret, {
-    expiresIn: config.jwtExpiresIn,
-  });
-}
 
 export const publicUser = (user) => ({
   id: user.id,
@@ -19,26 +12,52 @@ export const publicUser = (user) => ({
   updatedAt: user.updatedAt,
 });
 
+// Regenerates the session ID on login/register to prevent session fixation.
+export function establishSession(req, user) {
+  return new Promise((resolve, reject) => {
+    req.session.regenerate((regenErr) => {
+      if (regenErr) return reject(regenErr);
+      req.session.userId = user.id;
+      req.session.save((saveErr) => {
+        if (saveErr) return reject(saveErr);
+        resolve();
+      });
+    });
+  });
+}
+
+export function destroySession(req, res) {
+  return new Promise((resolve, reject) => {
+    const clear = () => {
+      res.clearCookie(config.sessionCookieName, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: config.cookieSecure,
+      });
+      resolve();
+    };
+    if (!req.session) return clear();
+    req.session.destroy((err) => {
+      if (err) return reject(err);
+      clear();
+    });
+  });
+}
+
 async function loadUserFromRequest(req) {
-  const header = req.headers.authorization ?? "";
-  const [scheme, token] = header.split(" ");
+  const userId = req.session?.userId;
+  if (!userId) return null;
 
-  if (scheme !== "Bearer" || !token) return null;
-
-  let payload;
-  try {
-    payload = jwt.verify(token, config.jwtSecret);
-  } catch {
-    throw unauthorized("Invalid or expired token", "INVALID_TOKEN");
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    req.session.userId = null;
+    throw unauthorized("User no longer exists", "INVALID_SESSION");
   }
-
-  const user = await prisma.user.findUnique({ where: { id: payload.sub } });
-  if (!user) throw unauthorized("User no longer exists", "INVALID_TOKEN");
 
   return user;
 }
 
-// Requires a valid Bearer token; sets req.user.
+// Requires a valid session; sets req.user.
 export async function requireAuth(req, _res, next) {
   try {
     const user = await loadUserFromRequest(req);

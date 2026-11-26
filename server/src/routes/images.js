@@ -14,8 +14,13 @@ export const itemImagesRouter = Router();
 // Mounted at /images  ->  DELETE /images/:id
 export const imagesRouter = Router();
 
-// POST /items/:id/images — poster or admin, respects the 5-image total limit
-itemImagesRouter.post("/:id/images", requireAuth, uploadImages, async (req, res, next) => {
+// POST /items/:id/images — poster or admin, respects the 1-image total limit
+itemImagesRouter.post(
+  "/:id/images",
+  requireAuth,
+  validate(itemIdParamSchema, "params"),
+  uploadImages,
+  async (req, res, next) => {
   try {
     const item = await prisma.item.findUnique({
       where: { id: req.params.id },

@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import session from "express-session";
 import path from "node:path";
 import { config } from "./config.js";
 import authRoutes from "./routes/auth.js";
@@ -23,6 +24,20 @@ app.use(
 );
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(
+  session({
+    name: config.sessionCookieName,
+    secret: config.sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: config.cookieSecure,
+      maxAge: config.sessionMaxAgeMs,
+    },
+  }),
+);
 
 // Serve uploaded images at /uploads/<filename>
 app.use(config.publicPathPrefix, express.static(path.resolve(process.cwd(), config.uploadDir)));

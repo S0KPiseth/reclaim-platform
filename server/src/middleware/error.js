@@ -1,6 +1,7 @@
 import multer from "multer";
 import { ZodError } from "zod";
 import { Prisma } from "@prisma/client";
+import { config } from "../config.js";
 import { AppError } from "./errors.js";
 import { removeUploadedFiles } from "./upload.js";
 
@@ -44,15 +45,22 @@ export function errorHandler(err, req, res, _next) {
 
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
-      return send(res, 400, "FILE_TOO_LARGE", "Each image must be 5 MB or smaller");
+      const maxMb = Math.round(config.maxImageBytes / (1024 * 1024));
+      return send(res, 400, "FILE_TOO_LARGE", `Image must be ${maxMb} MB or smaller`);
     }
     if (err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE") {
-      return send(res, 400, "TOO_MANY_FILES", "You can upload at most 5 images");
+      const n = config.maxImagesPerItem;
+      return send(
+        res,
+        400,
+        "TOO_MANY_FILES",
+        `You can upload at most ${n} ${n === 1 ? "image" : "images"}`,
+      );
     }
     return send(res, 400, "UPLOAD_ERROR", err.message);
   }
 
-  if (err?.message === "Only jpg, png and webp images are allowed") {
+  if (err?.message === "Only JPEG and PNG images are allowed") {
     return send(res, 400, "UNSUPPORTED_FILE_TYPE", err.message);
   }
 

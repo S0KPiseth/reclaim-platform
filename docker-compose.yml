@@ -64,7 +64,9 @@ services:
       context: ./server
     environment:
       DATABASE_URL: postgresql://reclaim:reclaim@postgres:5432/reclaim?schema=public
-      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-in-production}
+      SESSION_SECRET: ${SESSION_SECRET:-dev-only-change-me-in-production}
+      # Set to "true" only when the API is served over HTTPS.
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       PORT: "3445"
       # Service DNS name from inside the compose network.
       EMBEDDING_URL: http://embedding:8000

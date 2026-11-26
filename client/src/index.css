@@ -10,7 +10,7 @@
   --color-brand-900: #0a2a8f;
   --color-brand-950: #061e6e;
 
-  /* Ink used inside the white search bar */
+  /* Ink used inside white surfaces */
   --color-ink: #0b1b4a;
   --color-ink-muted: #5a6a8f;
 
@@ -19,6 +19,17 @@
   --color-glass-soft: rgb(6 30 110 / 0.4);
   --color-glass-strong: rgb(6 30 110 / 0.5);
   --color-tint: #e8f0ff;
+
+  /* Flat surfaces used by the app screens */
+  --color-surface: #ffffff;
+  --color-surface-soft: #f3f7ff;
+  --color-line: rgb(11 27 74 / 0.12);
+  --color-success: #0f7a4a;
+  --color-success-soft: #e3f9ee;
+  --color-warning: #8a5a00;
+  --color-warning-soft: #fff1d6;
+  --color-danger: #b3123a;
+  --color-danger-soft: #ffe1e8;
 
   --animate-rc-pulse: rc-pulse 4s infinite ease-out;
   --animate-rc-cycle: rc-cycle 15s infinite ease-in-out;
@@ -39,32 +50,39 @@
   html,
   body,
   #root {
-    height: 100%;
+    min-height: 100%;
   }
 
-  /* Root shell left over from the Vite template. The page paints over it, but
-     it still contributes a 1px inline border, so keep it for identical layout. */
+  html {
+    scroll-behavior: smooth;
+  }
+
   #root {
     display: flex;
-    max-width: 100%;
-    max-height: 100vh;
-    margin: 0 auto;
-    overflow-y: hidden;
     flex-direction: column;
-    box-sizing: border-box;
-    border-inline: 1px solid var(--color-border, #e5e4e7);
   }
 
   body {
     margin: 0;
-    /* Legacy root typography: 18px with a 145% line-height, which child
-       elements with percentage line-heights (e.g. 1.45) resolve against. */
+    /* Legacy root typography kept from the landing design: 18px with a 145%
+       line-height that child elements with percentage line-heights resolve
+       against. */
     font-size: 18px;
     line-height: 145%;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    background-color: #1646d6;
+  }
+
+  ::selection {
+    background-color: #ffd84d;
+    color: #0b1b4a;
+  }
+
+  input[type="checkbox"] {
+    accent-color: var(--color-brand-600);
   }
 }
 
@@ -73,4 +91,298 @@
   border: 1px solid rgb(255 255 255 / 0.25);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+
+@layer components {
+  /* ---------------------------------------------------------------- buttons */
+  .rc-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 0;
+    border-radius: 9999px;
+    padding: 0.7rem 1.4rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: #fff;
+    background-color: var(--color-brand-600);
+    cursor: pointer;
+    text-decoration: none;
+    white-space: nowrap;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease,
+      opacity 0.15s ease,
+      transform 0.15s ease;
+  }
+
+  .rc-btn:hover:not(:disabled) {
+    background-color: var(--color-brand-700);
+  }
+
+  .rc-btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .rc-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .rc-btn:focus-visible {
+    outline: 3px solid rgb(255 255 255 / 0.8);
+    outline-offset: 2px;
+  }
+
+  .rc-btn-light {
+    background-color: #fff;
+    color: var(--color-brand-700);
+  }
+
+  .rc-btn-light:hover:not(:disabled) {
+    background-color: var(--color-tint);
+    color: var(--color-brand-700);
+  }
+
+  .rc-btn-glass {
+    background-color: var(--color-glass);
+    color: #fff;
+    border: 1px solid rgb(255 255 255 / 0.28);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .rc-btn-glass:hover:not(:disabled) {
+    background-color: var(--color-glass-strong);
+  }
+
+  .rc-btn-ghost {
+    background-color: transparent;
+    color: #fff;
+    border: 1px solid rgb(255 255 255 / 0.35);
+  }
+
+  .rc-btn-ghost:hover:not(:disabled) {
+    background-color: rgb(255 255 255 / 0.14);
+  }
+
+  .rc-btn-outline {
+    background-color: #fff;
+    color: var(--color-ink);
+    border: 1px solid var(--color-line);
+  }
+
+  .rc-btn-outline:hover:not(:disabled) {
+    background-color: var(--color-surface-soft);
+    color: var(--color-ink);
+  }
+
+  .rc-btn-danger {
+    background-color: var(--color-danger-soft);
+    color: var(--color-danger);
+    border: 1px solid #ffc2d0;
+  }
+
+  .rc-btn-danger:hover:not(:disabled) {
+    background-color: #ffd0db;
+    color: var(--color-danger);
+  }
+
+  .rc-btn-sm {
+    padding: 0.45rem 0.95rem;
+    font-size: 0.85rem;
+  }
+
+  .rc-btn-block {
+    width: 100%;
+  }
+
+  .rc-btn svg {
+    flex: none;
+  }
+
+  /* Light buttons and chips sit on white panels, so the white focus ring from
+     .rc-btn would be invisible there. */
+  .rc-btn-outline:focus-visible,
+  .rc-btn-danger:focus-visible,
+  .rc-chip-light:focus-visible {
+    outline: 3px solid rgb(47 107 255 / 0.55);
+    outline-offset: 2px;
+  }
+
+  .rc-chip:focus-visible {
+    outline: 3px solid rgb(255 255 255 / 0.85);
+    outline-offset: 2px;
+  }
+
+  /* ------------------------------------------------------------------ forms */
+  .rc-field {
+    width: 100%;
+    border: 1px solid var(--color-line);
+    border-radius: 14px;
+    background-color: #fff;
+    padding: 0.7rem 0.95rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    color: var(--color-ink);
+  }
+
+  .rc-field::placeholder {
+    color: var(--color-ink-muted);
+    opacity: 0.7;
+  }
+
+  .rc-field:focus {
+    border-color: transparent;
+    outline: 3px solid rgb(47 107 255 / 0.35);
+    outline-offset: 1px;
+  }
+
+  .rc-field[type="file"] {
+    padding: 0.5rem;
+    background-color: var(--color-surface-soft);
+    font-size: 0.85rem;
+  }
+
+  .rc-label {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-ink);
+  }
+
+  /* --------------------------------------------------------------- surfaces */
+  .rc-panel {
+    border-radius: 24px;
+    background-color: #fff;
+    color: var(--color-ink);
+    box-shadow: 0 24px 60px rgb(4 20 80 / 0.28);
+  }
+
+  .rc-card {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 20px;
+    background-color: #fff;
+    color: var(--color-ink);
+    text-decoration: none;
+    box-shadow: 0 16px 40px rgb(4 20 80 / 0.22);
+    transition:
+      transform 0.18s ease,
+      box-shadow 0.18s ease;
+  }
+
+  .rc-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 26px 55px rgb(4 20 80 / 0.32);
+  }
+
+  .rc-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.9rem;
+    border: 1px solid var(--color-line);
+    border-radius: 18px;
+    background-color: #fff;
+    padding: 0.75rem;
+  }
+
+  /* ------------------------------------------------------------- white chips */
+  .rc-chip-light {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid var(--color-line);
+    border-radius: 9999px;
+    background-color: #fff;
+    padding: 0.35rem 0.8rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .rc-chip-light:hover {
+    background-color: var(--color-tint);
+  }
+
+  .rc-chip-light[aria-current="true"] {
+    background-color: var(--color-brand-600);
+    border-color: var(--color-brand-600);
+    color: #fff;
+  }
+
+  .rc-chip-light[aria-current="true"]:hover {
+    background-color: var(--color-brand-700);
+  }
+
+  /* ------------------------------------------------------------- blue chips */
+  .rc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid rgb(255 255 255 / 0.28);
+    border-radius: 9999px;
+    background-color: var(--color-glass);
+    padding: 0.4rem 0.85rem;
+    font-family: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .rc-chip:hover {
+    background-color: var(--color-glass-strong);
+  }
+
+  .rc-chip[aria-current="true"] {
+    background-color: #fff;
+    border-color: #fff;
+    color: var(--color-brand-700);
+  }
+
+  .rc-chip[aria-current="true"]:hover {
+    background-color: var(--color-tint);
+  }
+
+  /* ------------------------------------------------------------- utilities */
+  .rc-divider {
+    border-top: 1px dashed rgb(11 27 74 / 0.2);
+  }
+
+  .rc-scroll-x {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .rc-scroll-x::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

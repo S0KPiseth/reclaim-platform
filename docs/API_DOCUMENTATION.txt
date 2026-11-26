@@ -5,7 +5,8 @@ RECLAIM LOST & FOUND API — DOCUMENTATION
 Version:      2.0 — 22 November 2026
 Base URL:     http://localhost:3445  (configurable via PORT env var)
 Content-Type: application/json (except uploads, which use multipart/form-data)
-Auth:         Protected routes require an "Authorization: Bearer <token>" header.
+Auth:         Protected routes require the session cookie set by POST /auth/login
+              (or /auth/register). No Authorization header is used.
 
 CHANGES IN 2.0 (AI search phase)
   + GET /items now accepts "mode=semantic" for CLIP-powered semantic search.
@@ -33,7 +34,7 @@ Error — envelope (always):
   Error codes:
     400  BAD_REQUEST, FILE_TOO_LARGE, TOO_MANY_FILES, UPLOAD_ERROR,
          UNSUPPORTED_FILE_TYPE, INVALID_JSON, INVALID_STATUS_TRANSITION, NO_FILES
-    401  UNAUTHORIZED, INVALID_TOKEN, INVALID_CREDENTIALS
+    401  UNAUTHORIZED, INVALID_SESSION, INVALID_CREDENTIALS
     403  FORBIDDEN
     404  NOT_FOUND
     409  CONFLICT, EMAIL_TAKEN, ITEM_NOT_OPEN, CLAIM_EXISTS, CLAIM_NOT_PENDING,
@@ -66,10 +67,9 @@ AUTH ENDPOINTS  (/auth)
        "phone":    "string, 3-30 chars (optional)"
      }
    Success: 201 Created
-     {
-       "user":  { id, email, name, phone, role, createdAt, updatedAt },
-       "token": "JWT string"
-     }
+     { "user": { id, email, name, phone, role, createdAt, updatedAt } }
+   The session cookie (reclaim.sid, HttpOnly, SameSite=Lax, 7-day expiry) is
+   set on the response.
    NOTE: this endpoint does NOT use the {data:...} envelope.
    Errors: 409 EMAIL_TAKEN; 422 VALIDATION_ERROR.
 
@@ -79,19 +79,24 @@ AUTH ENDPOINTS  (/auth)
    Request body (JSON):
      { "email": "string", "password": "string" }
    Success: 200 OK
-     {
-       "user":  { id, email, name, phone, role, createdAt, updatedAt },
-       "token": "JWT string"
-     }
+     { "user": { id, email, name, phone, role, createdAt, updatedAt } }
+   The session cookie (reclaim.sid, HttpOnly, SameSite=Lax, 7-day expiry) is
+   set on the response.
    NOTE: this endpoint does NOT use the {data:...} envelope.
    Errors: 401 INVALID_CREDENTIALS.
 
 3) GET /auth/me
    Description: Return the currently authenticated user.
-   Auth:        Required (Bearer token).
+   Auth:        Required (session cookie).
    Success: 200 OK
      { "user": { id, email, name, phone, role, createdAt, updatedAt } }
-   Errors: 401 UNAUTHORIZED / INVALID_TOKEN.
+   Errors: 401 UNAUTHORIZED / INVALID_SESSION.
+
+4) POST /auth/logout
+   Description: Destroy the current session and clear the cookie.
+   Auth:        None (safe to call when logged out).
+   Success: 200 OK
+     { "ok": true, "message": "Logged out" }
 
 ================================================================================
 ITEM ENDPOINTS  (/items)
@@ -166,7 +171,7 @@ Item object shape (as returned):
    Content-Type: multipart/form-data
    Form fields:
      image   file (required). Field name MUST be "image".
-             jpg / png / webp, max 5 MB.
+             jpg / png, max 2 MB.
 
    Query params:
      category (optional) category slug OR display name
@@ -196,8 +201,8 @@ Item object shape (as returned):
 
    Errors:
      422 VALIDATION_ERROR      no file, or wrong field name
-     400 UNSUPPORTED_FILE_TYPE not jpg/png/webp
-     400 FILE_TOO_LARGE        over 5 MB
+     400 UNSUPPORTED_FILE_TYPE not jpg/png
+     400 FILE_TOO_LARGE        over 2 MB
      503 SEARCH_UNAVAILABLE    AI service not configured, still loading, or down
 
 --------------------------------------------------------------------------------
@@ -252,8 +257,8 @@ Item object shape (as returned):
      foundLocation string, 1-200 chars (required)
      foundAt       valid date (required)
      handoverNote  string, up to 1000 chars (optional)
-     images        file(s), field name "images", up to 5
-                   (jpg/png/webp, max 5 MB each)
+     images        file, field name "images"; 1 photo max
+                   (jpg/png, max 2 MB)
    Success: 201 Created
      { "data": { <Item> } }
    Errors: 422 VALIDATION_ERROR; 400 FILE_TOO_LARGE / TOO_MANY_FILES /
@@ -396,12 +401,12 @@ Image object shape:
   { "id", "itemId", "url", "position", "createdAt" }
 
 1) POST /items/:id/images
-   Description: Add images to an item (poster or admin), respecting the 5-image
-                total per item. Re-indexes the AI vector in the background.
+   Description: Add an image to an item (poster or admin). Each item stores 1 photo,
+                so a second upload returns IMAGE_LIMIT_REACHED. Re-indexes the AI vector in the background.
    Auth:        Required (poster or admin).
    Content-Type: multipart/form-data.
    Form fields:
-     images  file(s), field name "images" (required; jpg/png/webp, 5 MB each)
+     images  file, field name "images" (required; jpg/png, max 2 MB)
    Success: 201 Created
      { "data": [ <Image>... ] }   // all images for the item, ordered by position
    Errors: 404 NOT_FOUND; 403 FORBIDDEN; 400 NO_FILES / IMAGE_LIMIT_REACHED /
@@ -504,17 +509,24 @@ Static uploads:
 
 CORS:
   Allowed origins are localhost and 127.0.0.1 on any port (http and https).
-  Run the frontend on localhost, or ask the backend team to add your origin.
+  Requests must be sent with credentials ("credentials: include" in fetch) so
+  the session cookie is stored and returned. The frontend must use the same
+  hostname as the API (localhost or 127.0.0.1) — mixing them is cross-site and
+  the SameSite=Lax cookie is dropped.
 
 ================================================================================
 AUTHENTICATION NOTES
 ================================================================================
 
-- Token is a JSON Web Token (JWT) with 7-day expiry.
-- Send it via:  Authorization: Bearer <token>
+- Auth is a server-side session stored in an HttpOnly cookie named reclaim.sid.
+  The cookie expires after 7 days; its secret is SESSION_SECRET (JWT_SECRET is
+  still accepted as a fallback for older .env files).
+- Browser requests must include credentials; no Authorization header is used,
+  so the frontend never handles a token.
+- POST /auth/logout destroys the session and clears the cookie.
 - Public endpoints that accept optional auth change their response for
   authenticated users (e.g. revealing own ARCHIVED items). An invalid/expired
-  token on those endpoints is ignored (treated as anonymous).
+  session on those endpoints is ignored (treated as anonymous).
 
 ================================================================================
 LOCAL SETUP QUICK REFERENCE
